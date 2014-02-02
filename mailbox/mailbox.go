@@ -7,6 +7,7 @@ import (
     "net/mail"
     "bytes"
     "errors"
+    "time"
 )
 
 // A connection to an IMAP server.
@@ -62,7 +63,8 @@ func (conn *Connection) Close() {
 }
 
 // Retrieve metadata for all messages in a given mailbox.
-func (conn *Connection) Messages(box string, count uint32) []*MessageMeta {
+func (conn *Connection) Messages(box string, count uint32) ([]*MessageMeta,
+error) {
     conn.client.Select(box, true)
 
     // Create a range set that selects the most recent `count` messages (or
@@ -79,18 +81,28 @@ func (conn *Connection) Messages(box string, count uint32) []*MessageMeta {
         messages = make([]*MessageMeta, totalCount)
     }
 
-    // Fetch messages
-    // FIXME handle errors gracefully
-    cmd, _ := conn.client.Fetch(set, "RFC822.HEADER RFC822.SIZE UID")
+    // Fetch messages.
+    cmd, err := conn.client.Fetch(set, "RFC822.HEADER RFC822.SIZE UID")
+    if (err != nil) {
+        return nil, err
+    }
+
+    // Parse each message.
     i := 0
     for cmd.InProgress() {
-        conn.client.Recv(10)
+        err = conn.client.Recv(time.Second * 5)
+        if (err != nil) {
+            return nil, err
+        }
 
         // Process the message data received so far.
         for _, rsp := range cmd.Data {
             msgInfo := rsp.MessageInfo()
             header := imap.AsBytes(msgInfo.Attrs["RFC822.HEADER"])
-            msg, _ := mail.ReadMessage(bytes.NewReader(header))
+            msg, err := mail.ReadMessage(bytes.NewReader(header))
+            if (err != nil) {
+                return nil, err
+            }
 
             messages[i] = &MessageMeta{
                 UID: msgInfo.UID,
@@ -102,5 +114,5 @@ func (conn *Connection) Messages(box string, count uint32) []*MessageMeta {
         cmd.Data = nil
     }
 
-    return messages
+    return messages, nil
 }

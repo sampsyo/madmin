@@ -12,7 +12,11 @@ func trymail(host string, user string, pass string) {
     if (err != nil) {
         log.Fatal("connection failed")
     }
-    for _, mm := range conn.Messages("INBOX", 5) {
+    messages, err := conn.Messages("INBOX", 5)
+    if (err != nil) {
+        log.Fatal("failed to get messages", err.Error())
+    }
+    for _, mm := range messages {
         fmt.Println(mm.Subject)
     }
     conn.Close()
