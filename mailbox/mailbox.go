@@ -61,35 +61,38 @@ func (conn *Connection) Close() {
     conn.client.Logout(3)
 }
 
-func getMessages(client *imap.Client, box string,
+func getMetadata(client *imap.Client, box string, count uint32,
                  messages chan<- MessageMeta) {
     client.Select(box, true)
 
-    // Choose first 10 messages
+    // Create a range set that selects the most recent `count` messages (or
+    // all messages if the mailbox contains fewer than that).
     set, _ := imap.NewSeqSet("")
-    if client.Mailbox.Messages >= 10 {
-        set.AddRange(client.Mailbox.Messages-9, client.Mailbox.Messages)
+    if client.Mailbox.Messages >= count {
+        set.AddRange(client.Mailbox.Messages - (count - 1),
+                     client.Mailbox.Messages)
     } else {
         set.Add("1:*")
     }
 
     // Fetch messages
+    // FIXME handle errors gracefully
     cmd, _ := client.Fetch(set, "RFC822.HEADER RFC822.SIZE UID")
     for cmd.InProgress() {
+        // FIXME handle timeout/error
         client.Recv(10)
 
-        // Process returned messages
+        // Process the message data received so far.
         for _, rsp := range cmd.Data {
             msgInfo := rsp.MessageInfo()
             header := imap.AsBytes(msgInfo.Attrs["RFC822.HEADER"])
             msg, _ := mail.ReadMessage(bytes.NewReader(header))
 
-            mm := MessageMeta{
+            messages <- MessageMeta{
                 UID: msgInfo.UID,
                 Size: msgInfo.Size,
                 Subject: msg.Header.Get("Subject"),
             }
-            messages <- mm
         }
         cmd.Data = nil
     }
@@ -100,8 +103,8 @@ func getMessages(client *imap.Client, box string,
 // Retrieve metadata for all messages in a given mailbox. Messages are
 // requested asynchronously, but be sure to consume all messages before
 // issuing any more commands.
-func (conn *Connection) Messages(box string) <-chan MessageMeta {
+func (conn *Connection) Messages(box string, count uint32) <-chan MessageMeta {
     messages := make(chan MessageMeta, 10)
-    go getMessages(conn.client, box, messages)
+    go getMetadata(conn.client, box, count, messages)
     return messages
 }
