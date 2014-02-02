@@ -61,26 +61,30 @@ func (conn *Connection) Close() {
     conn.client.Logout(3)
 }
 
-func getMetadata(client *imap.Client, box string, count uint32,
-                 messages chan<- MessageMeta) {
-    client.Select(box, true)
+// Retrieve metadata for all messages in a given mailbox.
+func (conn *Connection) Messages(box string, count uint32) []*MessageMeta {
+    conn.client.Select(box, true)
 
     // Create a range set that selects the most recent `count` messages (or
-    // all messages if the mailbox contains fewer than that).
+    // all messages if the mailbox contains fewer than that). Also, allocate a
+    // slice for the results.
     set, _ := imap.NewSeqSet("")
-    if client.Mailbox.Messages >= count {
-        set.AddRange(client.Mailbox.Messages - (count - 1),
-                     client.Mailbox.Messages)
+    var messages []*MessageMeta
+    totalCount := conn.client.Mailbox.Messages
+    if totalCount >= count {
+        set.AddRange(totalCount - (count - 1), totalCount)
+        messages = make([]*MessageMeta, count)
     } else {
         set.Add("1:*")
+        messages = make([]*MessageMeta, totalCount)
     }
 
     // Fetch messages
     // FIXME handle errors gracefully
-    cmd, _ := client.Fetch(set, "RFC822.HEADER RFC822.SIZE UID")
+    cmd, _ := conn.client.Fetch(set, "RFC822.HEADER RFC822.SIZE UID")
+    i := 0
     for cmd.InProgress() {
-        // FIXME handle timeout/error
-        client.Recv(10)
+        conn.client.Recv(10)
 
         // Process the message data received so far.
         for _, rsp := range cmd.Data {
@@ -88,23 +92,15 @@ func getMetadata(client *imap.Client, box string, count uint32,
             header := imap.AsBytes(msgInfo.Attrs["RFC822.HEADER"])
             msg, _ := mail.ReadMessage(bytes.NewReader(header))
 
-            messages <- MessageMeta{
+            messages[i] = &MessageMeta{
                 UID: msgInfo.UID,
                 Size: msgInfo.Size,
                 Subject: msg.Header.Get("Subject"),
             }
+            i++
         }
         cmd.Data = nil
     }
 
-    close(messages)
-}
-
-// Retrieve metadata for all messages in a given mailbox. Messages are
-// requested asynchronously, but be sure to consume all messages before
-// issuing any more commands.
-func (conn *Connection) Messages(box string, count uint32) <-chan MessageMeta {
-    messages := make(chan MessageMeta, 10)
-    go getMetadata(conn.client, box, count, messages)
     return messages
 }
