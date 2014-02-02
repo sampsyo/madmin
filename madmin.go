@@ -15,7 +15,7 @@ func trymail(host string, user string, pass string) {
     for mm := range conn.Messages("INBOX") {
         fmt.Println(mm)
     }
-    conn.Logout()
+    conn.Close()
 }
 
 func main() {
